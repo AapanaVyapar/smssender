@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+option go_package = ".;pb";
+option java_multiple_files = true;
+option java_package = "com.aapanavyapar.aapanavyapar.services";
+
+
+message ReadyToSendMessageRequest {
+  string apiKey = 1;
+  string secret = 2; // hash of user_id + some_random_data
+}
+
+message ReadyToSendMessageResponse {
+  string mobileNo = 3;
+  string messageId = 4;
+  string message = 5;
+}
+
+message SendSmsRequest {
+  string apiKey = 6;
+  string mobileNo = 7;
+  string message = 8;
+}
+
+message SendSmsResponse {
+  bool status = 9;
+}
+
+message AckToSmsRequest {
+  string apiKey = 10;
+  string messageId = 11;
+}
+
+message AckToSmsResponse {
+  bool status = 12;
+}
