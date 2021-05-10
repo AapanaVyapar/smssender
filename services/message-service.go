@@ -7,20 +7,20 @@ import (
 	"context"
 	"fmt"
 	"github.com/go-redis/redis/v8"
-	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type SmsSenderServiceServer struct {
 	mutex         sync.RWMutex
 	Cash          *cash.RedisDataBase
 	Connections   map[*pb.ReadyToSendMessageRequest]pb.SmsSenderService_ReadyToSendMessageServer
-	CurrentWorker uint32
+	CurrentWorker int
 }
 
 func NewSmsService() *SmsSenderServiceServer {
@@ -29,6 +29,11 @@ func NewSmsService() *SmsSenderServiceServer {
 		Cash:          cash.NewRedisClient(),
 		Connections:   make(map[*pb.ReadyToSendMessageRequest]pb.SmsSenderService_ReadyToSendMessageServer, 10),
 		CurrentWorker: 0,
+	}
+
+	err := server.Cash.InitSmsStream(context.TODO())
+	if err != nil {
+		panic(err)
 	}
 
 	checkOldMessages, err := strconv.ParseBool(os.Getenv("REDIS_STREAM_CHECK_BACKLOG"))
@@ -55,17 +60,16 @@ func (smsService *SmsSenderServiceServer) SendSms(ctx context.Context, request *
 		return nil, status.Errorf(codes.Unauthenticated, "Invalid API Key")
 	}
 
-	mid, err := uuid.NewRandom()
+	smsService.mutex.Lock()
+	mid := time.Now().UnixNano()
+	smsService.mutex.Unlock()
+
+	err := smsService.Cash.AddToSmsStream(ctx, request.GetMobileNo(), strconv.FormatInt(mid, 10), request.GetMessage())
 	if err != nil {
 		return nil, err
 	}
 
-	err = smsService.Cash.AddToSmsStream(ctx, request.GetMobileNo(), mid.String(), request.GetMessage())
-	if err != nil {
-		return nil, err
-	}
-
-	return nil, nil
+	return &pb.SendSmsResponse{Status: true}, nil
 }
 
 func (smsService *SmsSenderServiceServer) AckToSms(ctx context.Context, request *pb.AckToSmsRequest) (*pb.AckToSmsResponse, error) {
@@ -75,6 +79,11 @@ func (smsService *SmsSenderServiceServer) AckToSms(ctx context.Context, request 
 	}
 
 	err := smsService.Cash.AckToSmsStream(ctx, request.GetMessageId())
+	if err != nil {
+		return nil, err
+	}
+
+	err = smsService.Cash.DelFromSmsStream(ctx, request.GetMessageId())
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +100,8 @@ func (smsService *SmsSenderServiceServer) SyncPerformer(checkOldMessages bool) {
 			myKeyId = lastId
 
 		}
+
+		fmt.Println(smsService.CurrentWorker)
 
 		readGroup := smsService.Cash.ReadFromSmsStream(context.TODO(), 10, 200, myKeyId, registers.APPS[registers.WORKERS_ARRAY[smsService.CurrentWorker]])
 		if readGroup.Err() != nil {
@@ -135,7 +146,7 @@ func (smsService *SmsSenderServiceServer) SyncPerformer(checkOldMessages bool) {
 
 		}
 		lastId = val.ID
-		if smsService.CurrentWorker > uint32(len(registers.WORKERS_ARRAY))-1 {
+		if smsService.CurrentWorker >= len(registers.WORKERS_ARRAY)-1 {
 			smsService.CurrentWorker = 0
 
 		} else {

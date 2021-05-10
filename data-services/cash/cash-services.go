@@ -40,9 +40,9 @@ func (dataBase *RedisDataBase) AckToSmsStream(ctx context.Context, val string) e
 	return err
 }
 
-func (dataBase *RedisDataBase) DelFromSmsStream(ctx context.Context, val *redis.XMessage) {
-	dataBase.Cash.XDel(ctx, os.Getenv("REDIS_STREAM_MSG_NAME"), val.ID)
-
+func (dataBase *RedisDataBase) DelFromSmsStream(ctx context.Context, val string) error {
+	err := dataBase.Cash.XDel(ctx, os.Getenv("REDIS_STREAM_MSG_NAME"), val).Err()
+	return err
 }
 
 func (dataBase *RedisDataBase) ReadFromSmsStream(ctx context.Context, count int64, timeout time.Duration, myKeyId, workerName string) *redis.XStreamSliceCmd {
