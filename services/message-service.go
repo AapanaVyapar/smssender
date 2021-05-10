@@ -104,8 +104,11 @@ func (smsService *SmsSenderServiceServer) AckToSms(ctx context.Context, request 
 		return nil, status.Errorf(codes.Unauthenticated, "Invalid API Key")
 	}
 
+	fmt.Println("Acknowledge To : ", request.GetMessageId())
+
 	err := smsService.Cash.AckToSmsStream(ctx, request.GetMessageId())
 	if err != nil {
+		fmt.Println("Test")
 		return nil, err
 	}
 

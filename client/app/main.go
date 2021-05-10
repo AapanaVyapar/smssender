@@ -17,7 +17,7 @@ func main() {
 
 	fmt.Println("Environmental Variables Loaded .. !!")
 
-	serverAddress := "0.0.0.0:4559"
+	serverAddress := fmt.Sprintf("0.0.0.0:%s", os.Getenv("Port"))
 	log.Printf("dialing to server  : %s", serverAddress)
 
 	conn, err := grpc.Dial(serverAddress, grpc.WithInsecure())
