@@ -7,7 +7,7 @@ option java_package = "com.aapanavyapar.aapanavyapar.services";
 import "sms-messages.proto";
 
 service SmsSenderService {
-  rpc ReadyToSendMessage (ReadyToSendMessageRequest) returns (stream ReadyToSendMessageResponse);
+  rpc ReadyToSendMessage (stream ReadyToSendMessageRequest) returns (stream ReadyToSendMessageResponse);
   rpc SendSms (SendSmsRequest) returns (SendSmsResponse);
   rpc AckToSms (AckToSmsRequest) returns (AckToSmsResponse);
 

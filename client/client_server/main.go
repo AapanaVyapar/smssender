@@ -29,15 +29,6 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Hour)
 	defer cancel()
 
-	//resp, err := client.AckToSms(ctx, &pb.AckToSmsRequest{
-	//	ApiKey:    "fdfdsb&*h3uhfdskjwrhufds998Aihwihvbjfjhiur2732wefiuhsd7e98fdsa",
-	//	MessageId: "480605095515531354-0",
-	//})
-	//if err != nil {
-	//	panic(err)
-	//}
-	//fmt.Println(resp.GetStatus())
-
 	for i := 0; i < 100; i++ {
 		resp1, err := client.SendSms(ctx, &pb.SendSmsRequest{
 			ApiKey:   os.Getenv("API_KEY"),

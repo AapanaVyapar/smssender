@@ -9,6 +9,7 @@ import (
 	"github.com/go-redis/redis/v8"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -17,18 +18,20 @@ import (
 )
 
 type SmsSenderServiceServer struct {
-	mutex         sync.RWMutex
-	Cash          *cash.RedisDataBase
-	Connections   map[*pb.ReadyToSendMessageRequest]pb.SmsSenderService_ReadyToSendMessageServer
-	CurrentWorker int
+	mutex sync.RWMutex
+	Cash  *cash.RedisDataBase
+	//ConnectionsRequest []*pb.ReadyToSendMessageRequest
+	ConnectionsStream []pb.SmsSenderService_ReadyToSendMessageServer
+	CurrentWorker     int
 }
 
 func NewSmsService() *SmsSenderServiceServer {
 
 	server := &SmsSenderServiceServer{
-		Cash:          cash.NewRedisClient(),
-		Connections:   make(map[*pb.ReadyToSendMessageRequest]pb.SmsSenderService_ReadyToSendMessageServer, 10),
-		CurrentWorker: 0,
+		Cash: cash.NewRedisClient(),
+		//ConnectionsRequest: nil,
+		ConnectionsStream: nil,
+		CurrentWorker:     -1,
 	}
 
 	err := server.Cash.InitSmsStream(context.TODO())
@@ -46,12 +49,35 @@ func NewSmsService() *SmsSenderServiceServer {
 	return server
 }
 
-func (smsService *SmsSenderServiceServer) ReadyToSendMessage(request *pb.ReadyToSendMessageRequest, stream pb.SmsSenderService_ReadyToSendMessageServer) error {
-	_, ok := registers.APPS[request.GetApiKey()]
-	if !ok {
-		return status.Errorf(codes.Unauthenticated, "Invalid API Key")
+func (smsService *SmsSenderServiceServer) ReadyToSendMessage(stream pb.SmsSenderService_ReadyToSendMessageServer) error {
+	counter := 0
+	for {
+		request, err := stream.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		_, ok := registers.APPS[request.GetApiKey()]
+		if !ok {
+			return status.Errorf(codes.Unauthenticated, "Invalid API Key")
+		}
+
+		if counter == 0 {
+			if smsService.ConnectionsStream != nil {
+				//smsService.ConnectionsRequest = append(smsService.ConnectionsRequest, request)
+				smsService.ConnectionsStream = append(smsService.ConnectionsStream, stream)
+
+			} else {
+				//smsService.ConnectionsRequest = []*pb.ReadyToSendMessageRequest{request}
+				smsService.ConnectionsStream = []pb.SmsSenderService_ReadyToSendMessageServer{stream}
+
+			}
+		}
+		counter += 1
 	}
-	smsService.Connections[request] = stream
 	return nil
 }
 
@@ -101,9 +127,7 @@ func (smsService *SmsSenderServiceServer) SyncPerformer(checkOldMessages bool) {
 
 		}
 
-		fmt.Println(smsService.CurrentWorker)
-
-		readGroup := smsService.Cash.ReadFromSmsStream(context.TODO(), 10, 200, myKeyId, registers.APPS[registers.WORKERS_ARRAY[smsService.CurrentWorker]])
+		readGroup := smsService.Cash.ReadFromSmsStream(context.TODO(), 10, 200, myKeyId, os.Getenv("REDIS_STREAM_MSG_WORKER"))
 		if readGroup.Err() != nil {
 			if strings.Contains(readGroup.Err().Error(), "timeout") {
 				fmt.Println("MSG : TimeOUT")
@@ -127,7 +151,7 @@ func (smsService *SmsSenderServiceServer) SyncPerformer(checkOldMessages bool) {
 
 		if len(data[0].Messages) == 0 {
 			checkOldMessages = false
-			fmt.Println("FAV : Started Checking For New Messages ..!!")
+			fmt.Println("MSG : Started Checking For New Messages ..!!")
 			continue
 
 		}
@@ -137,7 +161,13 @@ func (smsService *SmsSenderServiceServer) SyncPerformer(checkOldMessages bool) {
 		for _, val = range data[0].Messages {
 			err = smsService.SendSmsToSend(context.TODO(), &val)
 			if err != nil {
-				fmt.Println("MSG : Context Error Please Check For Data Base Connectivity, Network Error Or Any Other Dependency Problem")
+				fmt.Println("MSG : Context Error Please Check For Sms Sending Device Connectivity, Network Error Or Any Other Dependency Problem")
+
+				for len(smsService.ConnectionsStream) == 0 {
+					fmt.Println("Waiting For Apps To Come Online")
+					time.Sleep(time.Second)
+				}
+
 				checkOldMessages = true
 				val.ID = "0"
 				break
@@ -146,25 +176,36 @@ func (smsService *SmsSenderServiceServer) SyncPerformer(checkOldMessages bool) {
 
 		}
 		lastId = val.ID
-		if smsService.CurrentWorker >= len(registers.WORKERS_ARRAY)-1 {
-			smsService.CurrentWorker = 0
-
-		} else {
-			smsService.CurrentWorker += 1
-
-		}
 	}
 
 }
 
 func (smsService *SmsSenderServiceServer) SendSmsToSend(ctx context.Context, val *redis.XMessage) error {
-	messageId := val.ID
-	mobileNo := val.Values["mobileNo"].(string)
-	message := val.Values["message"].(string)
 
-	fmt.Println(messageId)
-	fmt.Println(mobileNo)
-	fmt.Println(message)
+	if len(smsService.ConnectionsStream) == 0 {
+		return fmt.Errorf("no sms sending sevice online")
 
-	return nil
+	} else {
+		smsService.CurrentWorker = (smsService.CurrentWorker + 1) % len(smsService.ConnectionsStream)
+
+		messageId := val.ID
+		mobileNo := val.Values["mobileNo"].(string)
+		message := val.Values["message"].(string)
+
+		stream := smsService.ConnectionsStream[smsService.CurrentWorker]
+
+		err := stream.Send(&pb.ReadyToSendMessageResponse{
+			MobileNo:  mobileNo,
+			MessageId: messageId,
+			Message:   message,
+		})
+		if err != nil {
+			smsService.ConnectionsStream = append(smsService.ConnectionsStream[:smsService.CurrentWorker], smsService.ConnectionsStream[smsService.CurrentWorker+1:]...)
+			fmt.Println(err)
+			return err
+		}
+
+		return nil
+	}
+
 }

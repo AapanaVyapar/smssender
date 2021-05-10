@@ -7,7 +7,6 @@ option java_package = "com.aapanavyapar.aapanavyapar.services";
 
 message ReadyToSendMessageRequest {
   string apiKey = 1;
-  string secret = 2; // hash of user_id + some_random_data
 }
 
 message ReadyToSendMessageResponse {
